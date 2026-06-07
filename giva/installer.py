@@ -357,7 +357,7 @@ class Installer:
         _log("lakebase", f"instance available @ {self.lakebase_host}")
 
         # 5b. connect (as current user, OAuth token) and create the database
-        token = self._bearer()
+        token = self._pg_token()
         self._pg_create_database(self.lakebase_host, token)
 
         # 5c. schema + seed (into the giva database)
@@ -416,6 +416,22 @@ class Installer:
         auth = hdr.get("Authorization", "")
         return auth.split(" ", 1)[1] if " " in auth else auth
 
+    def _pg_token(self) -> str:
+        """Lakebase Postgres requires a Databricks OAuth JWT as the password.
+        The SDK's API auth may be a PAT (dapi…) — not a JWT — so always mint a
+        short-lived database credential scoped to the instance instead."""
+        try:
+            cred = self.w.database.generate_database_credential(
+                request_id=str(uuid.uuid4()), instance_names=[self.lakebase_instance])
+            if getattr(cred, "token", None):
+                return cred.token
+        except Exception as e:
+            _log("lakebase", f"credential API fallback ({str(e)[:60]})")
+        resp = self.api.do("POST", "/api/2.0/database/credentials",
+                           body={"request_id": str(uuid.uuid4()),
+                                 "instance_names": [self.lakebase_instance]})
+        return resp.get("token") or self._bearer()
+
     def _pg(self, host, token, dbname):
         import psycopg2
         return psycopg2.connect(host=host, port=5432, dbname=dbname,
@@ -447,7 +463,7 @@ class Installer:
         """Give the app service principal a Postgres login + schema rights."""
         if not self.lakebase_host:
             return
-        token = self._bearer()
+        token = self._pg_token()
         conn = self._pg(self.lakebase_host, token, self.lakebase_db); conn.autocommit = True
         try:
             with conn.cursor() as cur:

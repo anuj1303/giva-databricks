@@ -29,7 +29,7 @@ from importlib import resources
 
 from .installer import install, Installer  # noqa: F401
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["install", "list_demos", "help", "Installer", "__version__"]
 
 
