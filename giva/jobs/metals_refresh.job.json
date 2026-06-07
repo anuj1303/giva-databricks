@@ -1,0 +1,20 @@
+{
+  "name": "[GIVA] Metals Refresh Pipeline",
+  "tags": { "demo": "giva", "component": "pricing" },
+  "max_concurrent_runs": 1,
+  "schedule": {
+    "quartz_cron_expression": "0 31 3,10 * * ?",
+    "timezone_id": "UTC",
+    "pause_status": "PAUSED"
+  },
+  "tasks": [
+    {
+      "task_key": "refresh_metal_prices",
+      "description": "Fetch live gold/silver rates, store SCD2 in Lakebase, recompute dynamic product prices. Installed PAUSED — trigger manually from the admin app or unpause when ready.",
+      "notebook_task": {
+        "notebook_path": "{{NOTEBOOK_PATH}}",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

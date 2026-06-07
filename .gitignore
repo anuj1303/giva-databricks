@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+.DS_Store
+# local dev/test helpers (hardcoded paths, not for distribution)
+scripts/_*.py

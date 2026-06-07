@@ -1,0 +1,45 @@
+command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+env:
+  # --- data layer (provisioned by the installer) ---
+  - name: GIVA_CATALOG
+    value: "{{CATALOG}}"
+  - name: GIVA_SCHEMA
+    value: "{{SCHEMA}}"
+  - name: GIVA_PRODUCTS_TABLE
+    value: "{{CATALOG}}.{{SCHEMA}}.enriched_jewelry_products"
+  - name: GIVA_VS_ENDPOINT
+    value: "{{VS_ENDPOINT}}"
+  - name: GIVA_VS_INDEX
+    value: "{{CATALOG}}.{{SCHEMA}}.jewelry_embeddings_index"
+  - name: GIVA_IMAGE_VOLUME
+    value: "/Volumes/{{CATALOG}}/{{SCHEMA}}/{{VOLUME}}"
+  # --- warehouse ---
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: "sql-warehouse"
+  # --- Lakebase (orders / users / nudges / prices) ---
+  - name: LAKEBASE_HOST
+    value: "{{LAKEBASE_HOST}}"
+  - name: LAKEBASE_DB
+    value: "{{LAKEBASE_DATABASE}}"
+  # --- embedded analytics ---
+  - name: LAKEVIEW_DASHBOARD_ID
+    value: "{{DASHBOARD_ID}}"
+  - name: GENIE_SPACE_ID
+    value: "{{GENIE_SPACE_ID}}"
+  # --- background jobs (created PAUSED by the installer) ---
+  - name: PRICE_REFRESH_JOB_ID
+    value: "{{PRICE_REFRESH_JOB_ID}}"
+  - name: NUDGE_EMAIL_JOB_ID
+    value: "{{NUDGE_EMAIL_JOB_ID}}"
+
+resources:
+  - name: sql-warehouse
+    sql_warehouse:
+      id: "{{WAREHOUSE_ID}}"
+      permission: "CAN_USE"
+  - name: giva-orders-db
+    database:
+      instance_name: "{{LAKEBASE_INSTANCE}}"
+      database_name: "{{LAKEBASE_DATABASE}}"
+      permission: "CAN_CONNECT_AND_CREATE"

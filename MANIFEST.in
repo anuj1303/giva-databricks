@@ -1,0 +1,10 @@
+include README.md LICENSE
+recursive-include brickjewels/conf *.json
+recursive-include brickjewels/sql *.sql
+recursive-include brickjewels/genie *.md
+recursive-include brickjewels/dashboards *.json
+recursive-include brickjewels/jobs *.json
+recursive-include brickjewels/data *.gz
+recursive-include brickjewels/notebooks *.py
+recursive-include brickjewels/app *.yaml *.txt *.json *.py
+recursive-include brickjewels/app/backend/static *

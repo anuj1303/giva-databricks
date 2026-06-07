@@ -1,0 +1,16 @@
+{
+  "analysts": [
+    {
+      "email": "admin@giva.co",
+      "password": "Giva@2026",
+      "name": "GIVA Admin",
+      "role": "admin"
+    },
+    {
+      "email": "analyst@giva.co",
+      "password": "analyst123",
+      "name": "Anuj Lathi",
+      "role": "analyst"
+    }
+  ]
+}

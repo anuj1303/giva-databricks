@@ -1,0 +1,988 @@
+{
+  "datasets": [
+    {
+      "name": "ds_orders",
+      "displayName": "Orders",
+      "queryLines": [
+        "SELECT order_id, user_id, total_amount, status, order_date FROM {{CATALOG}}.{{SCHEMA}}.fact_orders "
+      ]
+    },
+    {
+      "name": "ds_order_items",
+      "displayName": "Order Items",
+      "queryLines": [
+        "SELECT order_id, user_id, order_date, product_name, category, material, quantity, unit_price, line_total FROM {{CATALOG}}.{{SCHEMA}}.fact_order_items WHERE category IS NOT NULL "
+      ]
+    },
+    {
+      "name": "ds_gold_prices",
+      "displayName": "Gold Prices",
+      "queryLines": [
+        "SELECT price_date, MAX(CAST(price_gram_24k AS DOUBLE)) as gold_24k, MAX(CAST(price_gram_22k AS DOUBLE)) as gold_22k, MAX(CAST(pct_change_24k AS DOUBLE)) as pct_change FROM {{CATALOG}}.{{SCHEMA}}.fact_metal_prices WHERE metal = 'Gold' GROUP BY price_date "
+      ]
+    },
+    {
+      "name": "ds_gold_vs_sales",
+      "displayName": "Gold vs Sales",
+      "queryLines": [
+        "SELECT g.price_date, g.gold_24k, COALESCE(o.revenue, 0) as revenue, COALESCE(o.orders, 0) as orders FROM (SELECT price_date, MAX(CAST(price_gram_24k AS DOUBLE)) as gold_24k FROM {{CATALOG}}.{{SCHEMA}}.fact_metal_prices WHERE metal = 'Gold' GROUP BY price_date) g LEFT JOIN (SELECT order_date, SUM(total_amount) as revenue, COUNT(*) as orders FROM {{CATALOG}}.{{SCHEMA}}.fact_orders GROUP BY order_date) o ON g.price_date = o.order_date "
+      ]
+    },
+    {
+      "name": "ds_customers",
+      "displayName": "Customer Lifetime Value",
+      "queryLines": [
+        "SELECT u.first_name || ' ' || u.last_name as customer_name, COUNT(DISTINCT o.order_id) as total_orders, SUM(o.total_amount) as lifetime_value FROM {{CATALOG}}.{{SCHEMA}}.dim_users u JOIN {{CATALOG}}.{{SCHEMA}}.fact_orders o ON u.user_id = o.user_id GROUP BY 1 ORDER BY lifetime_value DESC LIMIT 15 "
+      ]
+    },
+    {
+      "name": "ds_nudges",
+      "displayName": "Nudge Effectiveness",
+      "queryLines": [
+        "SELECT nudge_type, COUNT(*) as total_nudges, SUM(CASE WHEN is_redeemed THEN 1 ELSE 0 END) as redeemed, SUM(CASE WHEN is_dismissed THEN 1 ELSE 0 END) as dismissed FROM {{CATALOG}}.{{SCHEMA}}.fact_nudges GROUP BY nudge_type "
+      ]
+    },
+    {
+      "name": "ds_wishlists",
+      "displayName": "Wishlists by Category",
+      "queryLines": [
+        "SELECT category, COUNT(DISTINCT user_id) as wishlist_users, SUM(price_inr) as wishlist_value FROM {{CATALOG}}.{{SCHEMA}}.fact_wishlists WHERE category IS NOT NULL GROUP BY category "
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "page_sales",
+      "displayName": "Sales Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "title-sales",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Sales Overview"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-revenue",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_orders",
+                  "fields": [
+                    {
+                      "name": "sum(total_amount)",
+                      "expression": "SUM(`total_amount`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_amount)",
+                  "displayName": "Total Revenue"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total Revenue (INR)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-orders",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_orders",
+                  "fields": [
+                    {
+                      "name": "count(order_id)",
+                      "expression": "COUNT(`order_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(order_id)",
+                  "displayName": "Total Orders"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total Orders"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 1,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-aov",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_orders",
+                  "fields": [
+                    {
+                      "name": "avg(total_amount)",
+                      "expression": "AVG(`total_amount`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(total_amount)",
+                  "displayName": "Avg Order Value"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg Order Value (INR)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 1,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_orders",
+                  "fields": [
+                    {
+                      "name": "countdistinct(user_id)",
+                      "expression": "COUNT(DISTINCT `user_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(user_id)",
+                  "displayName": "Unique Customers"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Unique Customers"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 1,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-daily-revenue",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_orders",
+                  "fields": [
+                    {
+                      "name": "daily(order_date)",
+                      "expression": "DATE_TRUNC(\"DAY\", `order_date`)"
+                    },
+                    {
+                      "name": "sum(total_amount)",
+                      "expression": "SUM(`total_amount`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "daily(order_date)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Date"
+                },
+                "y": {
+                  "fieldName": "sum(total_amount)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Revenue (INR)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Daily Revenue Trend"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-monthly-orders",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_orders",
+                  "fields": [
+                    {
+                      "name": "monthly(order_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `order_date`)"
+                    },
+                    {
+                      "name": "count(order_id)",
+                      "expression": "COUNT(`order_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(order_date)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Month"
+                },
+                "y": {
+                  "fieldName": "count(order_id)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Orders"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly Order Count"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 6,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "page_category",
+      "displayName": "Category Analysis",
+      "layout": [
+        {
+          "widget": {
+            "name": "title-category",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Category Analysis"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-cat-pie",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_order_items",
+                  "fields": [
+                    {
+                      "name": "category",
+                      "expression": "`category`"
+                    },
+                    {
+                      "name": "sum(line_total)",
+                      "expression": "SUM(`line_total`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "sum(line_total)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Revenue"
+                },
+                "color": {
+                  "fieldName": "category",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Category"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Revenue by Category"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-top-products",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_order_items",
+                  "fields": [
+                    {
+                      "name": "product_name",
+                      "expression": "`product_name`"
+                    },
+                    {
+                      "name": "sum(line_total)",
+                      "expression": "SUM(`line_total`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "product_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  },
+                  "displayName": "Product"
+                },
+                "y": {
+                  "fieldName": "sum(line_total)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Revenue (INR)"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top Products by Revenue"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 1,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-cat-trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_order_items",
+                  "fields": [
+                    {
+                      "name": "monthly(order_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `order_date`)"
+                    },
+                    {
+                      "name": "category",
+                      "expression": "`category`"
+                    },
+                    {
+                      "name": "sum(line_total)",
+                      "expression": "SUM(`line_total`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(order_date)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Month"
+                },
+                "y": {
+                  "fieldName": "sum(line_total)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Revenue"
+                },
+                "color": {
+                  "fieldName": "category",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Category"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Category Revenue Trends"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "table-cat-summary",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_order_items",
+                  "fields": [
+                    {
+                      "name": "category",
+                      "expression": "`category`"
+                    },
+                    {
+                      "name": "count(order_id)",
+                      "expression": "COUNT(DISTINCT `order_id`)"
+                    },
+                    {
+                      "name": "sum(line_total)",
+                      "expression": "SUM(`line_total`)"
+                    },
+                    {
+                      "name": "sum(quantity)",
+                      "expression": "SUM(`quantity`)"
+                    },
+                    {
+                      "name": "avg(unit_price)",
+                      "expression": "AVG(`unit_price`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "category",
+                    "displayName": "Category"
+                  },
+                  {
+                    "fieldName": "count(order_id)",
+                    "displayName": "Orders"
+                  },
+                  {
+                    "fieldName": "sum(line_total)",
+                    "displayName": "Revenue (INR)"
+                  },
+                  {
+                    "fieldName": "sum(quantity)",
+                    "displayName": "Units Sold"
+                  },
+                  {
+                    "fieldName": "avg(unit_price)",
+                    "displayName": "Avg Price"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Category Breakdown"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "page_metal",
+      "displayName": "Metal Price Impact",
+      "layout": [
+        {
+          "widget": {
+            "name": "title-metal",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Metal Price Impact on Sales"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-gold-price",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_gold_prices",
+                  "fields": [
+                    {
+                      "name": "price_date",
+                      "expression": "`price_date`"
+                    },
+                    {
+                      "name": "gold_24k",
+                      "expression": "`gold_24k`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "price_date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Date"
+                },
+                "y": {
+                  "fieldName": "gold_24k",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Gold 24K (INR/gram)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Gold 24K Price Trend"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-gold-vs-revenue",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_gold_vs_sales",
+                  "fields": [
+                    {
+                      "name": "daily(price_date)",
+                      "expression": "DATE_TRUNC(\"DAY\", `price_date`)"
+                    },
+                    {
+                      "name": "avg(gold_24k)",
+                      "expression": "AVG(`gold_24k`)"
+                    },
+                    {
+                      "name": "sum(revenue)",
+                      "expression": "SUM(`revenue`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "combo",
+              "encodings": {
+                "x": {
+                  "fieldName": "daily(price_date)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Date"
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "avg(gold_24k)",
+                      "displayName": "Gold Price (INR/g)"
+                    },
+                    {
+                      "fieldName": "sum(revenue)",
+                      "displayName": "Revenue (INR)"
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Gold Price vs Daily Revenue"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "page_customers",
+      "displayName": "Customer Insights",
+      "layout": [
+        {
+          "widget": {
+            "name": "title-customers",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Customer Insights"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-wishlist-cat",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_wishlists",
+                  "fields": [
+                    {
+                      "name": "category",
+                      "expression": "`category`"
+                    },
+                    {
+                      "name": "wishlist_users",
+                      "expression": "`wishlist_users`"
+                    },
+                    {
+                      "name": "wishlist_value",
+                      "expression": "`wishlist_value`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "category",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  },
+                  "displayName": "Category"
+                },
+                "y": {
+                  "fieldName": "wishlist_users",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Users with Wishlists"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Wishlist Users by Category"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 3,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-nudges",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_nudges",
+                  "fields": [
+                    {
+                      "name": "nudge_type",
+                      "expression": "`nudge_type`"
+                    },
+                    {
+                      "name": "total_nudges",
+                      "expression": "`total_nudges`"
+                    },
+                    {
+                      "name": "redeemed",
+                      "expression": "`redeemed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "nudge_type",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Nudge Type"
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "total_nudges",
+                      "displayName": "Total"
+                    },
+                    {
+                      "fieldName": "redeemed",
+                      "displayName": "Redeemed"
+                    }
+                  ]
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "mark": {
+                "layout": "group"
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Nudge Effectiveness"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 1,
+            "width": 3,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "table-top-customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_customers",
+                  "fields": [
+                    {
+                      "name": "customer_name",
+                      "expression": "`customer_name`"
+                    },
+                    {
+                      "name": "total_orders",
+                      "expression": "`total_orders`"
+                    },
+                    {
+                      "name": "lifetime_value",
+                      "expression": "`lifetime_value`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "customer_name",
+                    "displayName": "Customer"
+                  },
+                  {
+                    "fieldName": "total_orders",
+                    "displayName": "Orders"
+                  },
+                  {
+                    "fieldName": "lifetime_value",
+                    "displayName": "Lifetime Value (INR)"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top Customers by Lifetime Value"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "name": "giva",
+  "category": "retail-genai",
+  "title": "GIVA — Agentic AI Jewelry Commerce",
+  "description": "An end-to-end agentic AI jewelry-commerce demo tailored to the Indian market. Provisions a Unity Catalog product catalog (~236 LLM-enriched jewelry products + images), a Vector Search index for semantic & image search, a Genie Space, an AI/BI analytics dashboard, a Lakebase (Postgres) transactional store (orders, users, nudges, live gold/silver prices, dynamic product prices), and a React + FastAPI storefront with the GIVA Concierge — an agentic multi-agent supervisor (Discovery / Pricing / Merchandising / Vernacular sub-agents) using native ai_* functions. Two background jobs (metals refresh + nudge emails) are installed PAUSED.",
+  "bundle": true,
+  "tags": ["genai", "agents", "vector-search", "genie", "ai-bi", "lakebase", "apps", "retail", "jewelry", "india"],
+
+  "defaults": {
+    "catalog": "main",
+    "schema": "giva_jewelry",
+    "volume": "jewelry_images",
+    "vs_endpoint": "giva-vs",
+    "lakebase_instance": "giva-orders",
+    "lakebase_database": "giva",
+    "app_name": "giva-jewels",
+    "genie_title": "GIVA Assistant",
+    "dashboard_title": "GIVA Analytics",
+    "embedding_model": "databricks-gte-large-en",
+    "llm_model": "databricks-claude-sonnet-4-6"
+  },
+
+  "data": {
+    "image_archive": "data/jewelry_images.tar.gz",
+    "tables": [
+      {"name": "enriched_jewelry_products", "parquet": "data/enriched_jewelry_products.parquet"},
+      {"name": "jewelry_embeddings",        "parquet": "data/jewelry_embeddings.parquet"},
+      {"name": "dim_users",         "parquet": "data/analytics/dim_users.parquet"},
+      {"name": "fact_orders",       "parquet": "data/analytics/fact_orders.parquet"},
+      {"name": "fact_order_items",  "parquet": "data/analytics/fact_order_items.parquet"},
+      {"name": "fact_metal_prices", "parquet": "data/analytics/fact_metal_prices.parquet"},
+      {"name": "fact_nudges",       "parquet": "data/analytics/fact_nudges.parquet"},
+      {"name": "fact_wishlists",    "parquet": "data/analytics/fact_wishlists.parquet"}
+    ],
+    "setup_sql": "sql/setup.sql",
+    "row_counts": {"enriched_jewelry_products": 236, "jewelry_embeddings": 236}
+  },
+
+  "vector_search": {
+    "endpoint_var": "vs_endpoint",
+    "endpoint_type": "STANDARD",
+    "index": "jewelry_embeddings_index",
+    "source_table": "jewelry_embeddings",
+    "primary_key": "product_id",
+    "embedding_column": "embedding",
+    "embedding_dimension": 1024,
+    "sync_type": "TRIGGERED"
+  },
+
+  "genie": {
+    "title_var": "genie_title",
+    "instructions": "genie/instructions.md",
+    "tables": [
+      {
+        "identifier": "{{CATALOG}}.{{SCHEMA}}.enriched_jewelry_products",
+        "entity_columns": ["category", "subcategory", "material", "occasion", "style", "collection"]
+      }
+    ],
+    "sample_questions": [
+      "What are the top selling categories by revenue?",
+      "Show me average price by material and category.",
+      "Which collections have the most products in stock?",
+      "Compare diamond vs gold jewelry by average price.",
+      "How many products do we have in each occasion category?"
+    ]
+  },
+
+  "dashboards": [
+    {
+      "title_var": "dashboard_title",
+      "definition": "dashboards/giva.lvdash.json",
+      "publish": true
+    }
+  ],
+
+  "lakebase": {
+    "instance_var": "lakebase_instance",
+    "database_var": "lakebase_database",
+    "capacity": "CU_1",
+    "schema_sql": "sql/lakebase_schema.sql",
+    "seed_dir": "data/lakebase",
+    "seed_order": [
+      "brickjewels_users",
+      "brickjewels_orders",
+      "brickjewels_user_data_scd2",
+      "brickjewels_metal_prices",
+      "brickjewels_product_prices",
+      "brickjewels_nudges",
+      "brickjewels_nudge_emails",
+      "brickjewels_chat_sessions",
+      "brickjewels_genie_history"
+    ]
+  },
+
+  "jobs": [
+    {
+      "key": "metals_refresh",
+      "definition": "jobs/metals_refresh.job.json",
+      "notebook": "notebooks/refresh_metal_prices.py",
+      "workspace_subpath": "notebooks/refresh_metal_prices",
+      "paused": true,
+      "env_var": "PRICE_REFRESH_JOB_ID"
+    },
+    {
+      "key": "nudge_emails",
+      "definition": "jobs/nudge_emails.job.json",
+      "notebook": "notebooks/send_nudge_emails.py",
+      "workspace_subpath": "notebooks/send_nudge_emails",
+      "paused": true,
+      "env_var": "NUDGE_EMAIL_JOB_ID"
+    }
+  ],
+
+  "app": {
+    "name_var": "app_name",
+    "source": "app",
+    "entrypoint": "backend.main:app",
+    "resources": [
+      {"name": "sql-warehouse", "type": "sql_warehouse", "permission": "CAN_USE"},
+      {"name": "giva-orders-db", "type": "database", "permission": "CAN_CONNECT_AND_CREATE"}
+    ],
+    "grants": [
+      "GRANT USE CATALOG ON CATALOG {{CATALOG}} TO `{{APP_SP}}`",
+      "GRANT USE SCHEMA  ON SCHEMA  {{CATALOG}}.{{SCHEMA}} TO `{{APP_SP}}`",
+      "GRANT SELECT      ON SCHEMA  {{CATALOG}}.{{SCHEMA}} TO `{{APP_SP}}`",
+      "GRANT READ VOLUME ON VOLUME  {{CATALOG}}.{{SCHEMA}}.{{VOLUME}} TO `{{APP_SP}}`",
+      "GRANT SELECT      ON TABLE   {{CATALOG}}.{{SCHEMA}}.jewelry_embeddings_index TO `{{APP_SP}}`"
+    ]
+  }
+}
