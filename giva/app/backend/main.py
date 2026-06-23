@@ -1524,32 +1524,64 @@ async def get_products(
     return {"products": page, "total": total, "offset": offset, "limit": limit}
 
 
+# Number + optional Indian unit. Order matters: longer/explicit units first.
+_PRICE_NUM = r'(\d+(?:\.\d+)?)'
+_PRICE_UNIT = r'(k|thousand|thousands|lakhs?|lacs?|l|crores?|cr)?'
+
+
+def _amount_to_rupees(num_str: str, unit: Optional[str]) -> int:
+    """Convert a number + Indian unit into rupees.
+    e.g. ('2','lakh')->200000, ('50','k')->50000, ('1.5','crore')->15000000.
+    A bare small number (<1000) is treated as thousands ('under 50' -> 50k),
+    preserving the original demo heuristic; large bare numbers are taken as-is.
+    """
+    val = float(num_str)
+    u = (unit or "").strip().lower()
+    if u in ("k", "thousand", "thousands"):
+        val *= 1_000
+    elif u in ("l", "lac", "lacs", "lakh", "lakhs"):
+        val *= 100_000
+    elif u in ("cr", "crore", "crores"):
+        val *= 10_000_000
+    elif val < 1000:
+        val *= 1_000
+    return int(round(val))
+
+
 def _extract_price_from_query(query: str, min_price: Optional[int], max_price: Optional[int]):
-    """Parse price constraints from natural language queries."""
+    """Parse price constraints from natural-language queries, including Indian
+    units (lakh/lac/crore/cr) and k/thousand. Recognizes upper bounds,
+    lower bounds, and ranges."""
     import re
-    q = query.lower().replace(",", "").replace("₹", "").replace("rs", "").replace("inr", "")
-    # "under 50k", "below 50000", "less than 50k"
-    m = re.search(r'(?:under|below|less than|within|upto|up to|max)\s*(\d+)\s*k?\b', q)
+    # Strip currency markers right before numbers so "Rs. 2 lakh" / "₹2L" parse.
+    q = re.sub(r'(?:₹|\brs\.?|\binr)\s*', ' ', query.lower().replace(",", ""))
+
+    NUM, UNIT = _PRICE_NUM, _PRICE_UNIT
+
+    # Upper bound: "under 2 lakh", "below 50k", "within 1.5 lakh", "budget of 2 lakh", "max 50000"
+    m = re.search(
+        r'(?:under|below|less than|within|upto|up to|max(?:imum)?|budget(?:\s+(?:of|is|around|about))?|around|about|less)\s*'
+        + NUM + r'\s*' + UNIT, q)
     if m and not max_price:
-        val = int(m.group(1))
-        max_price = val * 1000 if val < 1000 else val
-    # "above 50k", "over 50000", "more than 50k", "minimum 50k"
-    m = re.search(r'(?:above|over|more than|min|minimum|starting|from)\s*(\d+)\s*k?\b', q)
+        max_price = _amount_to_rupees(m.group(1), m.group(2))
+
+    # Lower bound: "above 50k", "over 1 lakh", "more than 50000", "starting from 2 lakh"
+    m = re.search(
+        r'(?:above|over|more than|min(?:imum)?|starting(?:\s+(?:from|at))?|start|from|at least)\s*'
+        + NUM + r'\s*' + UNIT, q)
     if m and not min_price:
-        val = int(m.group(1))
-        min_price = val * 1000 if val < 1000 else val
-    # "between 20k and 50k"
-    m = re.search(r'between\s*(\d+)\s*k?\s*(?:and|to|-)\s*(\d+)\s*k?', q)
+        min_price = _amount_to_rupees(m.group(1), m.group(2))
+
+    # Range: "between 50k and 1 lakh", "50k to 2 lakh", "1-2 lakh"
+    m = re.search(
+        r'(?:between\s*)?' + NUM + r'\s*' + UNIT + r'\s*(?:and|to|-|–|—)\s*' + NUM + r'\s*' + UNIT, q)
     if m and not min_price and not max_price:
-        v1, v2 = int(m.group(1)), int(m.group(2))
-        min_price = v1 * 1000 if v1 < 1000 else v1
-        max_price = v2 * 1000 if v2 < 1000 else v2
-    # "50k to 100k"
-    m = re.search(r'(\d+)\s*k?\s*(?:to|-)\s*(\d+)\s*k?\b', q)
-    if m and not min_price and not max_price:
-        v1, v2 = int(m.group(1)), int(m.group(2))
-        min_price = v1 * 1000 if v1 < 1000 else v1
-        max_price = v2 * 1000 if v2 < 1000 else v2
+        # A trailing-only unit ("1-2 lakh") applies to both numbers.
+        u1 = m.group(2) or m.group(4)
+        v1 = _amount_to_rupees(m.group(1), u1)
+        v2 = _amount_to_rupees(m.group(3), m.group(4))
+        min_price, max_price = min(v1, v2), max(v1, v2)
+
     return min_price, max_price
 
 
@@ -3705,8 +3737,13 @@ When the conversation requires showing products or performing cart actions, you 
 {"type": "search", "query": "your search query here"}
 ```
 
+BUDGET HANDLING (important):
+- Indian customers state budgets in lakh/crore/k. Convert to RUPEES: 1 lakh = 100000, 2 lakh = 200000, 1 crore = 10000000, 50k = 50000.
+- Whenever the user mentions a budget or price limit, you MUST include it as numeric fields in the action block: "max_price" (an upper limit, e.g. "under 2 lakh" -> 200000) and/or "min_price" (a lower limit). Always send these as plain integers in rupees, never strings or words.
+- Keep the budget words in "query" too, but the numeric fields are what enforce the filter. Never show items outside the stated budget — when the user says "under X", every result must be at or below X.
+
 Action types:
-- "search": Search the catalog. Set "query" to a descriptive search string (e.g., "diamond ring under 50000 for engagement minimalist style")
+- "search": Search the catalog. Set "query" to a descriptive search string and add "max_price"/"min_price" when a budget is given (e.g., {"type": "search", "query": "diamond ring engagement minimalist", "max_price": 200000})
 - "add_to_cart": Add product(s) to cart. Set "query" to describe the specific product to add (e.g., "gold necklace traditional style"). The system will search, find the best match, and add it to the cart. Use this when the user says things like "add that to my cart", "I'll take it", "add the gold necklace", etc. Use the conversation context to determine which product to add.
 - "add_to_wishlist": Add product to the wishlist. Set "query" to describe the product. Use when the user says "add to wishlist", "save this for later", "bookmark this", "I like this one but not ready to buy", etc. Use conversation context to determine which product.
 - "show_wishlist": Show all items currently in the user's wishlist. Use when the user says "show my wishlist", "what's in my wishlist", "pull up my saved items", etc. Set "query" to empty string.
@@ -3811,7 +3848,27 @@ async def chat(request: ChatRequest):
                         # Execute search if needed
                         if action in ("search", "add_to_cart", "add_to_wishlist", "wishlist_to_cart") and search_query:
                             limit = 1 if action in ("add_to_cart", "add_to_wishlist") else 6
-                            search_req = SearchRequest(query=search_query, limit=limit)
+
+                            # Resolve the budget reliably. Priority:
+                            #   1. Explicit numeric bounds the LLM emits in the action block.
+                            #   2. Bounds parsed from the user's ACTUAL latest message
+                            #      (backstop — the LLM sometimes drops/rephrases the budget).
+                            # semantic_search will also parse the search_query itself, but
+                            # only fills bounds we leave as None.
+                            def _coerce_int(v):
+                                return int(v) if isinstance(v, (int, float)) and v > 0 else None
+                            min_price = _coerce_int(action_data.get("min_price"))
+                            max_price = _coerce_int(action_data.get("max_price"))
+                            raw_min, raw_max = _extract_price_from_query(user_message, None, None)
+                            min_price = min_price if min_price is not None else raw_min
+                            max_price = max_price if max_price is not None else raw_max
+                            if min_price or max_price:
+                                logger.info(f"Chat budget resolved: min={min_price}, max={max_price}")
+
+                            search_req = SearchRequest(
+                                query=search_query, limit=limit,
+                                min_price=min_price, max_price=max_price,
+                            )
                             search_results = await semantic_search(search_req)
                             products = search_results.get("products", [])[:limit]
                     except (json.JSONDecodeError, KeyError):
