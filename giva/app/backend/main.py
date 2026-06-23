@@ -1509,6 +1509,11 @@ async def get_products(
         items = [p for p in items if p.get("occasion") == occasion]
     if material:
         items = [p for p in items if material in (p.get("material") or "")]
+
+    # Copy before mutating, then price on the LIVE rate so budget filtering and
+    # sorting match what the UI shows (stored price_inr diverges from live).
+    items = _copy_products(items)
+    _apply_live_prices(items)
     if min_price:
         items = [p for p in items if float(p.get("price_inr") or 0) >= min_price]
     if max_price:
@@ -1518,8 +1523,7 @@ async def get_products(
     items = sorted(items, key=lambda p: float(p.get("price_inr") or 0), reverse=reverse)
 
     total = len(items)
-    page = _copy_products(items[offset:offset + limit])
-    _apply_live_prices(page)
+    page = items[offset:offset + limit]
     _strip_internal(page)
     return {"products": page, "total": total, "offset": offset, "limit": limit}
 
@@ -1686,9 +1690,28 @@ async def semantic_search(request: SearchRequest):
     # -----------------------------------------------------------------
     embedding = await get_embedding(query)
 
+    # Budget is enforced on the LIVE price (after _apply_live_prices), not the
+    # stored price_inr column — the two diverge because prices are recomputed
+    # from live metal rates. When a price filter is active we pull a wider
+    # candidate set so enough in-budget pieces survive the post-price filter.
+    price_active = bool(request.min_price or request.max_price)
+
+    def filter_by_price(prods: list[dict]) -> list[dict]:
+        if not price_active:
+            return prods
+        kept = []
+        for p in prods:
+            price = float(p.get("price_inr") or 0)
+            if request.min_price and price < request.min_price:
+                continue
+            if request.max_price and price > request.max_price:
+                continue
+            kept.append(p)
+        return kept
+
     product_ids = []
     if embedding:
-        vs_results = await vector_search(embedding, num_results=30)
+        vs_results = await vector_search(embedding, num_results=80 if price_active else 30)
         product_ids = [r["product_id"] for r in vs_results if r.get("product_id")]
         logger.info(f"Vector search returned {len(product_ids)} product IDs for query: '{query}'")
 
@@ -1697,15 +1720,13 @@ async def semantic_search(request: SearchRequest):
         ids_str = ", ".join([f"'{pid}'" for pid in product_ids])
         order_cases = " ".join([f"WHEN product_id = '{pid}' THEN {i}" for i, pid in enumerate(product_ids)])
 
+        # NOTE: no price condition here — budget is enforced below on the live
+        # price. We fetch the full ranked candidate set and trim to limit later.
         conditions = [f"product_id IN ({ids_str})", "in_stock = true"]
         if request.category:
             conditions.append(f"LOWER(category) = LOWER('{request.category}')")
         if request.occasion:
             conditions.append(f"occasion = '{request.occasion}'")
-        if request.min_price:
-            conditions.append(f"price_inr >= {request.min_price}")
-        if request.max_price:
-            conditions.append(f"price_inr <= {request.max_price}")
 
         if request.sort == "price_asc":
             order_clause = "ORDER BY price_inr ASC"
@@ -1721,15 +1742,22 @@ async def semantic_search(request: SearchRequest):
             FROM {PRODUCTS_TABLE}
             WHERE {' AND '.join(conditions)}
             {order_clause}
-            LIMIT {request.limit}
+            LIMIT 100
         """
         products = await run_sql(query_sql)
-        logger.info(f"SQL returned {len(products)} products after DB filtering")
+        logger.info(f"SQL returned {len(products)} candidate products")
 
         # Apply strict attribute filter
         if has_attribute_filter:
             products = [p for p in products if product_matches_query(p)]
             logger.info(f"After attribute filter: {len(products)} products remain")
+
+        # Enforce budget on the LIVE price (this is what the user sees)
+        _apply_live_prices(products)
+        if price_active:
+            before = len(products)
+            products = filter_by_price(products)
+            logger.info(f"After live-price budget filter: {len(products)}/{before} remain")
 
     # -----------------------------------------------------------------
     # Step 3: Fallback — broad SQL fetch + strict attribute filter
@@ -1755,13 +1783,12 @@ async def semantic_search(request: SearchRequest):
                 f"OR LOWER(llm_description) LIKE LOWER('%{safe_word}%'))"
             )
 
+        # NOTE: no price condition here either — budget is enforced on the live
+        # price below. Fetch a broad candidate pool (ordered cheapest-first so
+        # in-budget pieces are retained even if the pool is truncated).
         kw_conditions = ["in_stock = true", f"({' OR '.join(word_clauses)})"]
         if request.category:
             kw_conditions.append(f"LOWER(category) = LOWER('{request.category}')")
-        if request.min_price:
-            kw_conditions.append(f"price_inr >= {request.min_price}")
-        if request.max_price:
-            kw_conditions.append(f"price_inr <= {request.max_price}")
 
         fallback_sql = f"""
             SELECT product_id, name, description, category, subcategory, material,
@@ -1769,8 +1796,8 @@ async def semantic_search(request: SearchRequest):
                    llm_attributes, llm_description
             FROM {PRODUCTS_TABLE}
             WHERE {' AND '.join(kw_conditions)}
-            ORDER BY price_inr DESC
-            LIMIT 100
+            ORDER BY price_inr ASC
+            LIMIT 200
         """
         products = await run_sql(fallback_sql)
         logger.info(f"Keyword fallback returned {len(products)} candidates")
@@ -1780,21 +1807,37 @@ async def semantic_search(request: SearchRequest):
             products = [p for p in products if product_matches_query(p)]
             logger.info(f"After attribute filter on fallback: {len(products)} products remain")
 
+        # Enforce budget on the LIVE price
+        _apply_live_prices(products)
+        if price_active:
+            before = len(products)
+            products = filter_by_price(products)
+            logger.info(f"After live-price budget filter (fallback): {len(products)}/{before} remain")
+
     # -----------------------------------------------------------------
-    # Step 4: Clean up and return
+    # Step 4: Clean up and return (live prices already applied above)
     # -----------------------------------------------------------------
     products = clean_products(products)
 
     ai_recommendation = ""
     if products:
-        ai_recommendation = await llm_recommend(query, products)
+        ai_recommendation = await llm_recommend(query, products[:request.limit])
     else:
+        budget_note = ""
+        if price_active:
+            def _fmt(n):
+                return f"₹{n:,.0f}"
+            if request.min_price and request.max_price:
+                budget_note = f" within {_fmt(request.min_price)}–{_fmt(request.max_price)}"
+            elif request.max_price:
+                budget_note = f" under {_fmt(request.max_price)}"
+            elif request.min_price:
+                budget_note = f" above {_fmt(request.min_price)}"
         ai_recommendation = (
-            f"We couldn't find any products matching \"{query}\" in our current collection. "
-            "Try broadening your search or browsing our categories to discover something you'll love."
+            f"We couldn't find any products matching \"{query}\"{budget_note} in our current collection. "
+            "Try adjusting your budget or broadening your search to discover something you'll love."
         )
 
-    _apply_live_prices(products)
     return {
         "query": query,
         "products": products[:request.limit],
